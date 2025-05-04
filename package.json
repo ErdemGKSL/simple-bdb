@@ -1,0 +1,25 @@
+{
+  "name": "simple-bdb",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "tspc"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@types/node": "^22.15.2",
+    "ts-patch": "^3.3.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3",
+    "typescript-transform-paths": "^3.5.3"
+  },
+  "dependencies": {
+    "@msgpack/msgpack": "^3.1.1",
+    "@types/lodash": "^4.17.16",
+    "lodash": "^4.17.21"
+  }
+}
