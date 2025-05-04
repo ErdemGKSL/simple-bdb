@@ -89,6 +89,7 @@ new SimpleBDB(options)
 **Options:**
 - `filePath` (string, optional): Path to the database file. Default: `'database.bdb'`
 - `autoSave` (boolean, optional): Whether to automatically save changes. Default: `true`
+- `cachedData` (boolean, optional): Whether to cache data for making less read request to your os. Default: `true`
 
 ### Methods
 

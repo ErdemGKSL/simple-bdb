@@ -6,12 +6,14 @@ import lodash from "lodash";
 interface DatabaseOptions {
   filePath?: string;
   autoSave?: boolean;
+  cacheData?: boolean;
 }
 
 class Database {
   private filePath: string;
   private data: Record<string, any>;
   private autoSave: boolean;
+  private cacheData: boolean;
 
   /**
    * Creates a new Database instance
@@ -20,16 +22,19 @@ class Database {
   constructor(options: DatabaseOptions = {}) {
     this.filePath = options.filePath || "database.bdb";
     this.autoSave = options.autoSave !== false;
+    this.cacheData = options.cacheData !== false;
     this.data = {};
     
-    // Create directory if it doesn't exist
     const dir = path.dirname(this.filePath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
     
-    // Load existing data if file exists
-    this.load();
+    if (this.cacheData) {
+      this.load();
+    } else if (!fs.existsSync(this.filePath)) {
+      this.save();
+    }
   }
 
   /**
@@ -53,11 +58,31 @@ class Database {
   }
 
   /**
+   * Gets data directly from the file without using cache
+   * @returns The loaded data or empty object on failure
+   */
+  private readFromDisk(): Record<string, any> {
+    try {
+      if (fs.existsSync(this.filePath)) {
+        const buffer = fs.readFileSync(this.filePath);
+        if (buffer.length > 0) {
+          return decode(buffer) as Record<string, any>;
+        }
+      }
+      return {};
+    } catch (error) {
+      console.error("Error reading database from disk:", error);
+      return {};
+    }
+  }
+
+  /**
    * Saves data to the database file
    */
   public save(): void {
     try {
-      const encoded = encode(this.data);
+      const dataToSave = this.cacheData ? this.data : this.readFromDisk();
+      const encoded = encode(dataToSave);
       fs.writeFileSync(this.filePath, encoded);
     } catch (error) {
       console.error("Error saving database:", error);
@@ -71,22 +96,32 @@ class Database {
    * @returns The value that was set
    */
   public set(key: string, value: any): any {
+    let data = this.cacheData ? this.data : this.readFromDisk();
+    
     if (key.includes('.')) {
       const keys = key.split('.');
       const mainKey = keys.shift()!;
       const nestedKey = keys.join('.');
       
-      if (!this.data[mainKey]) {
-        this.data[mainKey] = {};
+      if (!data[mainKey]) {
+        data[mainKey] = {};
       }
       
-      lodash.set(this.data[mainKey], nestedKey, value);
+      lodash.set(data[mainKey], nestedKey, value);
     } else {
-      this.data[key] = value;
+      data[key] = value;
     }
     
-    if (this.autoSave) {
-      this.save();
+    if (!this.cacheData) {
+      const encoded = encode(data);
+      if (this.autoSave) {
+        fs.writeFileSync(this.filePath, encoded);
+      }
+    } else {
+      this.data = data;
+      if (this.autoSave) {
+        this.save();
+      }
     }
     
     return value;
@@ -99,20 +134,22 @@ class Database {
    * @returns The value from the database or the default value
    */
   public get(key: string, defaultValue: any = null): any {
+    const data = this.cacheData ? this.data : this.readFromDisk();
+    
     if (key.includes('.')) {
       const keys = key.split('.');
       const mainKey = keys.shift()!;
       const nestedKey = keys.join('.');
       
-      if (!this.data[mainKey]) {
+      if (!data[mainKey]) {
         return defaultValue;
       }
       
-      const value = lodash.get(this.data[mainKey], nestedKey);
+      const value = lodash.get(data[mainKey], nestedKey);
       return value !== undefined ? value : defaultValue;
     }
     
-    return this.data[key] !== undefined ? this.data[key] : defaultValue;
+    return data[key] !== undefined ? data[key] : defaultValue;
   }
 
   /**
@@ -121,19 +158,21 @@ class Database {
    * @returns Whether the key exists
    */
   public has(key: string): boolean {
+    const data = this.cacheData ? this.data : this.readFromDisk();
+    
     if (key.includes('.')) {
       const keys = key.split('.');
       const mainKey = keys.shift()!;
       const nestedKey = keys.join('.');
       
-      if (!this.data[mainKey]) {
+      if (!data[mainKey]) {
         return false;
       }
       
-      return lodash.has(this.data[mainKey], nestedKey);
+      return lodash.has(data[mainKey], nestedKey);
     }
     
-    return this.data[key] !== undefined;
+    return data[key] !== undefined;
   }
 
   /**
@@ -142,35 +181,42 @@ class Database {
    * @returns Whether the key was deleted
    */
   public delete(key: string): boolean {
+    let data = this.cacheData ? this.data : this.readFromDisk();
+    let result = false;
+    
     if (key.includes('.')) {
       const keys = key.split('.');
       const mainKey = keys.shift()!;
       const nestedKey = keys.join('.');
       
-      if (!this.data[mainKey]) {
+      if (!data[mainKey]) {
         return false;
       }
       
-      const result = lodash.unset(this.data[mainKey], nestedKey);
+      result = lodash.unset(data[mainKey], nestedKey);
+    } else {
+      if (data[key] === undefined) {
+        return false;
+      }
       
+      delete data[key];
+      result = true;
+    }
+    
+    if (!this.cacheData) {
+      // If not caching, we need to write the updated data back
+      const encoded = encode(data);
+      if (this.autoSave) {
+        fs.writeFileSync(this.filePath, encoded);
+      }
+    } else {
+      this.data = data;
       if (this.autoSave) {
         this.save();
       }
-      
-      return result;
     }
     
-    if (this.data[key] === undefined) {
-      return false;
-    }
-    
-    delete this.data[key];
-    
-    if (this.autoSave) {
-      this.save();
-    }
-    
-    return true;
+    return result;
   }
 
   /**
@@ -235,15 +281,23 @@ class Database {
    * @returns All data
    */
   public all(): { ID: string; data: any }[] {
-    return Object.entries(this.data).map(([ID, data]) => ({ ID, data }));
+    const data = this.cacheData ? this.data : this.readFromDisk();
+    return Object.entries(data).map(([ID, data]) => ({ ID, data }));
   }
 
   /**
    * Clears all data from the database
    */
   public clear(): void {
-    this.data = {};
-    if (this.autoSave) {
+    if (this.cacheData) {
+      this.data = {};
+    } else {
+      // If not caching, we just write an empty object to the file
+      const encoded = encode({});
+      fs.writeFileSync(this.filePath, encoded);
+    }
+    
+    if (this.cacheData && this.autoSave) {
       this.save();
     }
   }
